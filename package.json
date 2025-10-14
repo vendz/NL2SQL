@@ -1,7 +1,7 @@
 {
   "name": "nl2sql-cli",
   "version": "1.0.0",
-  "description": "CLI tool to convert natural language to SQL using Qwen 3 via OpenRouter",
+  "description": "CLI tool to convert natural language to SQL",
   "main": "dist/index.js",
   "bin": {
     "nl2sql": "./bin/nl2sql"
@@ -12,7 +12,10 @@
     "dev": "ts-node src/index.ts",
     "prepare": "npm run build",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js,json}\""
+    "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags"
   },
   "keywords": [
     "sql",
