@@ -9,13 +9,13 @@ A command-line tool that converts natural language queries into SQL. It analyzes
 - **Interactive Chat**: Command-line interface with conversation history
 - **Multi-Command**: Built-in commands for schema inspection, model details, and more
 
-<!-- ## Installation
+## Installation
 
 Install globally via NPM:
 
 ```bash
 npm install -g nl2sql-cli
-``` -->
+```
 
 ## Setup
 
