@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { ModelInfo } from '../models/analyzer';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -28,10 +29,11 @@ export class OpenRouterClient {
 
   async generateSQL(
     naturalLanguage: string,
-    schema: string,
+    models: ModelInfo[],
     chatHistory: ChatMessage[] = []
   ): Promise<string> {
     try {
+      const schema = this.generateSchemaFromModels(models);
       const systemPrompt = this.buildSystemPrompt(schema);
 
       const messages: Array<{
@@ -46,7 +48,7 @@ export class OpenRouterClient {
       const response = await this.client.chat.completions.create({
         model: this.model,
         messages,
-        temperature: 0, // Even stricter than 0.1
+        temperature: 0,
         max_tokens: 2000,
       });
 
@@ -69,6 +71,52 @@ export class OpenRouterClient {
       }
       throw new Error('Failed to generate SQL. Please try again.');
     }
+  }
+
+  private generateSchemaFromModels(models: ModelInfo[]): string {
+    const schemaLines: string[] = [];
+
+    models.forEach((model) => {
+      schemaLines.push(`Table: ${model.tableName} (Model: ${model.name})`);
+      schemaLines.push('Columns:');
+
+      model.columns.forEach((col) => {
+        const constraints: string[] = [];
+        if (col.primaryKey) constraints.push('PRIMARY KEY');
+        if (col.allowNull === false) constraints.push('NOT NULL');
+        if (col.unique) constraints.push('UNIQUE');
+        if (col.defaultValue) constraints.push(`DEFAULT ${col.defaultValue}`);
+
+        if (col.enumValues && col.enumValues.length > 0) {
+          constraints.push(`ALLOWED VALUES: [${col.enumValues.join(', ')}]`);
+        }
+
+        if (col.references)
+          constraints.push(
+            `REFERENCES ${col.references.model}(${col.references.key})`
+          );
+
+        const constraintStr =
+          constraints.length > 0 ? ` [${constraints.join(', ')}]` : '';
+        schemaLines.push(`  - ${col.name}: ${col.type}${constraintStr}`);
+      });
+
+      if (model.associations.length > 0) {
+        schemaLines.push('Associations:');
+        model.associations.forEach((assoc) => {
+          const details: string[] = [];
+          if (assoc.foreignKey) details.push(`foreignKey: ${assoc.foreignKey}`);
+          if (assoc.as) details.push(`as: ${assoc.as}`);
+          const detailStr =
+            details.length > 0 ? ` (${details.join(', ')})` : '';
+          schemaLines.push(`  - ${assoc.type} ${assoc.target}${detailStr}`);
+        });
+      }
+
+      schemaLines.push('');
+    });
+
+    return schemaLines.join('\n');
   }
 
   private buildSystemPrompt(schema: string): string {
@@ -102,25 +150,15 @@ Examples:
   }
 
   private cleanSQLResponse(response: string): string {
-    // Remove markdown code blocks
     let cleaned = response.replace(/```sql\n?/gi, '').replace(/```\n?/g, '');
-
-    // Remove leading/trailing whitespace
     cleaned = cleaned.trim();
-
     return cleaned;
   }
 
-  /**
-   * Set a custom model (useful for testing different Qwen versions)
-   */
   setModel(model: string): void {
     this.model = model;
   }
 
-  /**
-   * Get the current model being used
-   */
   getModel(): string {
     return this.model;
   }
