@@ -39,10 +39,34 @@ nl2sql chat
 - `/help` - Show commands
 - `/schema` - Display schema
 - `/models` - List models
+- `/explain <query>` - Explain similarity scores (e.g., /explain show users)
 - `/history` - View history
 - `/clear` - Clear chat
 - `/model <name>` - Switch AI model
 - `/exit` - Quit
+
+## Improving Model Discovery
+
+The CLI uses semantic search to find relevant tables. Help it work better by:
+
+1. **Add comments to your models:**
+
+```javascript
+   // User accounts and authentication data
+   const User = sequelize.define('User', { ... });
+```
+
+2. **Use descriptive column names:**
+   - ✅ `email`, `phone_number`, `created_at`
+   - ❌ `col1`, `data`, `field_x`
+
+3. **Document relationships clearly:**
+
+```javascript
+User.hasMany(Order, { as: 'purchases', foreignKey: 'customer_id' });
+```
+
+No special configuration needed - the system learns from your schema structure!
 
 ### Example Queries
 

@@ -2,9 +2,11 @@ import chalk from 'chalk';
 import { WatchableSchema } from '../models/analyzer';
 import { VectorSearch } from '../rag/vector-search';
 import { OpenRouterClient, ChatMessage } from '../llm/openrouter';
+import { HybridRetrieval } from '../rag/hybrid-retrieval';
 import * as readline from 'readline';
 
 const vectorSearch = new VectorSearch();
+let hybridRetrieval: HybridRetrieval;
 
 export async function runChat(watchableSchema: WatchableSchema): Promise<void> {
   console.log(
@@ -17,6 +19,7 @@ export async function runChat(watchableSchema: WatchableSchema): Promise<void> {
   console.log();
 
   await vectorSearch.initialize(watchableSchema.models);
+  hybridRetrieval = new HybridRetrieval(vectorSearch, watchableSchema.models);
 
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -100,9 +103,17 @@ export async function runChat(watchableSchema: WatchableSchema): Promise<void> {
       } catch (error) {
         console.log(chalk.red('❌ Failed to reload schema\n'));
       }
-    } else if (userInput.startsWith('/debug ')) {
-      const query = userInput.substring(7).trim();
-      await debugSimilarity(query, vectorSearch);
+    } else if (userInput.startsWith('/explain ')) {
+      const query = userInput.substring(9).trim();
+      const explanation = await hybridRetrieval.explainSelection(query);
+
+      console.log(chalk.yellow('\n🔍 Selection Explanation:'));
+      console.log(chalk.gray('─'.repeat(60)));
+      explanation.slice(0, 10).forEach((item, i) => {
+        console.log(chalk.cyan(`${i + 1}. ${item.model}`));
+        console.log(chalk.gray(`   ${item.reason}`));
+      });
+      console.log(chalk.gray('─'.repeat(60) + '\n'));
     } else if (userInput.startsWith('/model ')) {
       const modelName = userInput.substring(7).trim();
       try {
@@ -118,13 +129,7 @@ export async function runChat(watchableSchema: WatchableSchema): Promise<void> {
       console.log(chalk.red(`❌ Unknown command: ${userInput}`));
       console.log(chalk.gray('Type /help for available commands.\n'));
     } else {
-      await handleQuery(
-        userInput,
-        llm,
-        watchableSchema,
-        chatHistory,
-        vectorSearch
-      );
+      await handleQuery(userInput, llm, watchableSchema, chatHistory);
     }
 
     rl.prompt();
@@ -147,26 +152,29 @@ async function handleQuery(
   query: string,
   llm: OpenRouterClient,
   watchableSchema: WatchableSchema,
-  chatHistory: ChatMessage[],
-  vectorSearch: VectorSearch
+  chatHistory: ChatMessage[]
 ): Promise<void> {
   try {
     process.stdout.write(chalk.blue('🤔 Thinking... '));
 
-    // Find relevant models using vector search
-    const relevantModels = await vectorSearch.findRelevant(query, 5, 0.25);
+    const relevantModels = await hybridRetrieval.findRelevant(query, {
+      topK: 5,
+      threshold: 0.25,
+      includeRelated: true,
+    });
 
     readline.clearLine(process.stdout, 0);
     readline.cursorTo(process.stdout, 0);
 
-    // Show which models were selected
     if (relevantModels.length > 0) {
       console.log(
         chalk.magenta(
           `📊 Using ${relevantModels.length}/${watchableSchema.models.length} relevant table(s):`
         )
       );
-      relevantModels.forEach((m) => console.log(chalk.gray(`   • ${m.name}`)));
+      relevantModels.forEach((m) =>
+        console.log(chalk.gray(`   • ${m.name} (${m.tableName})`))
+      );
       console.log();
     } else {
       console.log(
@@ -174,7 +182,6 @@ async function handleQuery(
       );
     }
 
-    // Generate SQL with filtered models
     const modelsToUse =
       relevantModels.length > 0 ? relevantModels : watchableSchema.models;
     const response = await llm.generateSQL(query, modelsToUse, chatHistory);
@@ -203,33 +210,6 @@ async function handleQuery(
   }
 }
 
-async function debugSimilarity(
-  query: string,
-  vectorSearch: VectorSearch
-): Promise<void> {
-  try {
-    const scores = await vectorSearch.getScores(query);
-    console.log(
-      chalk.yellow('\n🔍 Similarity scores for:'),
-      chalk.white(query)
-    );
-    console.log(chalk.gray('─'.repeat(60)));
-    scores.slice(0, 10).forEach((s, i) => {
-      const percentage = (s.score * 100).toFixed(1);
-      const bar = '█'.repeat(Math.floor(s.score * 20));
-      console.log(
-        `${i + 1}. ${chalk.cyan(s.name.padEnd(20))} ${bar} ${percentage}%`
-      );
-    });
-    console.log(chalk.gray('─'.repeat(60) + '\n'));
-  } catch (error) {
-    console.log(
-      chalk.red('❌ Error:'),
-      error instanceof Error ? error.message : 'Failed to get scores'
-    );
-  }
-}
-
 function displayHelp(): void {
   console.log(chalk.yellow('📚 Available commands:'));
   console.log(chalk.gray('─'.repeat(60)));
@@ -244,8 +224,8 @@ function displayHelp(): void {
       chalk.gray('- List all available models with details')
   );
   console.log(
-    chalk.cyan('  /debug    ') +
-      chalk.gray('- Debug similarity scores (e.g., /debug show users)')
+    chalk.cyan('  /explain    ') +
+      chalk.gray('- Explain similarity scores (e.g., /explain show users)')
   );
   console.log(chalk.cyan('  /history  ') + chalk.gray('- Show chat history'));
   console.log(

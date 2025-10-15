@@ -5,7 +5,6 @@ import * as chokidar from 'chokidar';
 import { parse } from '@babel/parser';
 import traverse, { NodePath } from '@babel/traverse';
 
-// At the top of analyzer.ts (around line 7)
 interface ColumnInfo {
   name: string;
   type?: string;
@@ -23,6 +22,7 @@ interface ColumnInfo {
 export interface ModelInfo {
   name: string;
   tableName: string;
+  description?: string;
   columns: ColumnInfo[];
   associations: Array<{
     type: string;
@@ -325,32 +325,98 @@ function mergeCentralizedAssociations(
 }
 
 /**
+ * Extract ALL forms of documentation (universal approach)
+ */
+function extractModelDescription(
+  content: string,
+  modelName: string
+): string | undefined {
+  const descriptions: string[] = [];
+
+  // 1. JSDoc comments
+  const jsDocPattern = /\/\*\*\s*([\s\S]*?)\s*\*\//g;
+  let jsDocMatch;
+  while ((jsDocMatch = jsDocPattern.exec(content)) !== null) {
+    const comment = jsDocMatch[1]
+      .split('\n')
+      .map((line) => line.replace(/^\s*\*\s?/, '').trim())
+      .filter((line) => line && !line.startsWith('@'))
+      .join(' ');
+    if (comment) descriptions.push(comment);
+  }
+
+  // 2. Single-line comments above model
+  const singleLinePattern = new RegExp(
+    `(?://\\s*(.+?)\\s*\\n)+[\\s\\S]{0,50}(class|const|export)\\s+${modelName}`,
+    'i'
+  );
+  const singleLineMatch = content.match(singleLinePattern);
+  if (singleLineMatch) {
+    descriptions.push(singleLineMatch[1].trim());
+  }
+
+  // 3. Inline comments in define()
+  const defineCommentPattern = /\.define\s*\([^)]*\)\s*\/\/\s*(.+?)$/m;
+  const defineMatch = content.match(defineCommentPattern);
+  if (defineMatch) {
+    descriptions.push(defineMatch[1].trim());
+  }
+
+  // 4. Comments in table definition
+  const tableNamePattern =
+    /tableName:\s*['"`]([^'"`]+)['"`]\s*,?\s*(?:\/\/\s*(.+?)$)?/m;
+  const tableMatch = content.match(tableNamePattern);
+  if (tableMatch && tableMatch[2]) {
+    descriptions.push(tableMatch[2].trim());
+  }
+
+  // 5. Block comments anywhere in file mentioning the table
+  const blockCommentPattern = /\/\*[\s\S]*?\*\//g;
+  let blockMatch;
+  while ((blockMatch = blockCommentPattern.exec(content)) !== null) {
+    const comment = blockMatch[0];
+    if (
+      comment.toLowerCase().includes(modelName.toLowerCase()) ||
+      comment.toLowerCase().includes('table') ||
+      comment.toLowerCase().includes('model')
+    ) {
+      const cleaned = comment
+        .replace(/\/\*|\*\//g, '')
+        .replace(/\*/g, '')
+        .trim();
+      if (cleaned) descriptions.push(cleaned);
+    }
+  }
+
+  return descriptions.length > 0 ? descriptions.join('. ') : undefined;
+}
+
+/**
  * Parse a Sequelize model file to extract model information
  */
 function parseModelFile(content: string, filename: string): ModelInfo | null {
-  // Extract model name from filename
   const modelName = path.basename(filename, path.extname(filename));
 
-  // Try to extract table name
   let tableName = modelName.toLowerCase();
   const tableNameMatch = content.match(/tableName:\s*['"`]([^'"`]+)['"`]/);
   if (tableNameMatch) {
     tableName = tableNameMatch[1];
   }
 
-  // Extract columns from the model definition
+  const description = extractModelDescription(content, modelName);
+
   const columns = parseColumns(content);
 
   if (columns.length === 0) {
     return null;
   }
 
-  // Extract in-file associations
   const associations = parseAssociations(content);
 
   return {
     name: modelName,
     tableName,
+    description,
     columns,
     associations,
   };

@@ -28,7 +28,7 @@ export class VectorSearch {
 
     console.log(`📊 Computing embeddings for ${models.length} models...`);
     for (const model of models) {
-      const text = this.modelToText(model);
+      const text = this.modelToSearchableText(model);
       const embedding = await this.embed(text);
       this.modelEmbeddings.set(model.name, embedding);
     }
@@ -37,27 +37,54 @@ export class VectorSearch {
     console.log('✅ Vector search ready!\n');
   }
 
-  private modelToText(model: ModelInfo): string {
-    const parts = [
-      `Table ${model.name} (${model.tableName})`,
-      'Columns:',
-      ...model.columns.map((c) => {
-        const constraints = [];
-        if (c.primaryKey) constraints.push('PRIMARY KEY');
-        if (c.enumValues?.length)
-          constraints.push(`VALUES: ${c.enumValues.join(', ')}`);
-        return `${c.name} ${c.type} ${constraints.join(' ')}`;
-      }),
-    ];
+  /**
+   * Convert model to searchable text - UNIVERSAL approach
+   * Just present ALL available information, let embeddings figure it out
+   */
+  private modelToSearchableText(model: ModelInfo): string {
+    const parts: string[] = [];
 
+    // 1. Model/Table names (all variations)
+    parts.push(`Model name: ${model.name}`);
+    parts.push(`Table name: ${model.tableName}`);
+
+    // 2. Description/Comments (if provided by developer)
+    if (model.description) {
+      parts.push(`Description: ${model.description}`);
+    }
+
+    // 3. ALL column information
+    parts.push('Columns:');
+    model.columns.forEach((c) => {
+      const columnParts = [c.name];
+
+      if (c.type) columnParts.push(c.type);
+      if (c.primaryKey) columnParts.push('primary key');
+      if (c.allowNull === false) columnParts.push('required');
+      if (c.unique) columnParts.push('unique');
+      if (c.defaultValue) columnParts.push(`default ${c.defaultValue}`);
+      if (c.enumValues?.length) {
+        columnParts.push(`possible values: ${c.enumValues.join(' ')}`);
+      }
+      if (c.references) {
+        columnParts.push(`references ${c.references.model}`);
+      }
+
+      parts.push(columnParts.join(' '));
+    });
+
+    // 4. Relationships (structural information)
     if (model.associations.length > 0) {
       parts.push('Relationships:');
       model.associations.forEach((a) => {
-        parts.push(`${a.type} with ${a.target}`);
+        const assocParts = [a.type, a.target];
+        if (a.foreignKey) assocParts.push(`foreign key ${a.foreignKey}`);
+        if (a.as) assocParts.push(`alias ${a.as}`);
+        parts.push(assocParts.join(' '));
       });
     }
 
-    return parts.join(' ');
+    return parts.join('. ');
   }
 
   private async embed(text: string): Promise<number[]> {
@@ -111,5 +138,10 @@ export class VectorSearch {
         score: this.cosineSimilarity(queryEmbedding, embedding),
       }))
       .sort((a, b) => b.score - a.score);
+  }
+
+  getModelEmbeddingText(modelName: string): string | null {
+    const model = this.models.find((m) => m.name === modelName);
+    return model ? this.modelToSearchableText(model) : null;
   }
 }
